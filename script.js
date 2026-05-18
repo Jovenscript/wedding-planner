@@ -1,12 +1,11 @@
 /**
- * Wedding Planner SaaS - Core Logic
- * Firebase V10 (Auth + Firestore) configurado com suas chaves reais
+ * Wedding Planner SaaS - Core Engine
+ * Arquitetura Multiusuário Real com Firebase Compat CDN
  */
 
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
-import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
-import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
-
+// ==========================================
+// 1. CONFIGURAÇÃO DO SEU BANCO DE DADOS (FIREBASE)
+// ==========================================
 const firebaseConfig = {
     apiKey: "AIzaSyAsW2-Mu3u7SGRJMDtgvtvmI0JkCIi2QgI",
     authDomain: "widding-planner.firebaseapp.com",
@@ -16,12 +15,18 @@ const firebaseConfig = {
     appId: "1:769857893910:web:5c6cd69609c74638b26737"
 };
 
-const firebaseApp = initializeApp(firebaseConfig);
-const auth = getAuth(firebaseApp);
-const db = getFirestore(firebaseApp);
+// Inicialização segura baseada no estado das chaves
+const isFirebaseConfigured = firebaseConfig.apiKey !== "SUA_API_KEY";
+if (isFirebaseConfigured) {
+    firebase.initializeApp(firebaseConfig);
+}
 
-const WEDDING_DOC_ID = "casamento_caroline_marlon"; 
+const auth = isFirebaseConfigured ? firebase.auth() : null;
+const db = isFirebaseConfigured ? firebase.firestore() : null;
 
+// ==========================================
+// 2. ESTADO INICIAL COMPLETO (SaaS TEMPLATE)
+// ==========================================
 const defaultState = {
     settings: { noivos: "Caroline & Marlon", dataCasamento: "2026-08-29", metaRifa: 5000, nextRaffleNumber: 1 },
     families: [{ id: 'fam_ilton_sonia', name: 'Ilton e Sonia', phone: '' }],
@@ -34,69 +39,108 @@ const defaultState = {
 
 let appData = JSON.parse(JSON.stringify(defaultState));
 let financeChartInstance = null;
+let currentUserId = null; // UID do Firebase que dita a pasta exclusiva do cliente
 
 const AppState = {
-    async save() {
-        try {
-            await setDoc(doc(db, "weddings", WEDDING_DOC_ID), appData);
+    save() {
+        if(!isFirebaseConfigured) {
+            localStorage.setItem('weddingLocalDemoData', JSON.stringify(appData));
             app.renderAll();
-        } catch (e) {
-            console.error("Erro ao salvar no Firebase:", e);
-            if(e.code !== 'permission-denied') {
-                Swal.fire('Erro de Nuvem', 'Problemas ao salvar dados.', 'error');
-            }
+            return;
         }
+        if(!currentUserId) return;
+        db.collection("weddings").doc(currentUserId).set(appData)
+            .then(() => app.renderAll())
+            .catch((e) => console.error("Erro ao sincronizar nuvem:", e));
     },
-    listen() {
-        onSnapshot(doc(db, "weddings", WEDDING_DOC_ID), (document) => {
-            if (document.exists()) {
-                appData = document.data();
+    listen(uid) {
+        if(!isFirebaseConfigured) {
+            const localData = localStorage.getItem('weddingLocalDemoData');
+            if(localData) appData = JSON.parse(localData);
+            app.renderAll();
+            return;
+        }
+        db.collection("weddings").doc(uid).onSnapshot((doc) => {
+            if (doc.exists) {
+                appData = doc.data();
                 if(!appData.settings.nextRaffleNumber) appData.settings.nextRaffleNumber = 1;
                 app.renderAll();
             } else {
-                this.save();
+                this.save(); // Se for o primeiro acesso da conta, gera o modelo padrão
             }
         });
     }
 };
 
+// ==========================================
+// 3. REGRAS DE NEGÓCIO E INTERFACES
+// ==========================================
 const app = {
+    isLoginMode: true,
+
     init() {
         this.setupNavigation();
         document.getElementById('cfg-names').value = appData.settings.noivos;
         document.getElementById('cfg-date').value = appData.settings.dataCasamento;
+        this.renderAll();
+    },
+
+    toggleAuthMode() {
+        this.isLoginMode = !this.isLoginMode;
+        document.getElementById('auth-title').innerText = this.isLoginMode ? 'Acesse sua conta' : 'Crie sua conta SaaS';
+        document.getElementById('auth-btn').innerHTML = this.isLoginMode ? 'Entrar <i class="fa-solid fa-arrow-right"></i>' : 'Cadastrar <i class="fa-solid fa-user-plus"></i>';
+        document.getElementById('auth-toggle-text').innerText = this.isLoginMode ? 'Não tem uma conta?' : 'Já possui uma conta?';
+        document.getElementById('auth-toggle-btn').innerText = this.isLoginMode ? 'Criar agora' : 'Fazer Login';
     },
 
     setupAuth() {
-        const loginForm = document.getElementById('login-form');
-        loginForm.addEventListener('submit', async (e) => {
+        const authForm = document.getElementById('auth-form');
+        authForm.addEventListener('submit', (e) => {
             e.preventDefault();
-            const email = document.getElementById('login-email').value;
-            const pass = document.getElementById('login-password').value;
             
-            Swal.fire({ title: 'Autenticando...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
-            try {
-                await signInWithEmailAndPassword(auth, email, pass);
-                Swal.close();
-            } catch (error) {
-                Swal.fire('Acesso Negado', 'E-mail ou senha incorretos.', 'error');
-            }
-        });
-
-        onAuthStateChanged(auth, (user) => {
-            if (user) {
+            if(!isFirebaseConfigured) {
+                Swal.fire('Modo Demonstração', 'Executando em sandbox offline local. Seus dados serão persistidos no navegador local para testes rápidos!', 'info');
                 document.getElementById('login-screen').classList.add('hidden');
                 document.querySelectorAll('.hidden-app').forEach(el => el.classList.remove('hidden-app'));
-                AppState.listen();
+                document.getElementById('cloud-status-text').innerHTML = `<i class="fa-solid fa-triangle-exclamation text-yellow-500 mr-1"></i> Modo Local Demo`;
+                AppState.listen(null);
                 this.init();
+                return;
+            }
+
+            const email = document.getElementById('auth-email').value;
+            const pass = document.getElementById('auth-password').value;
+            Swal.fire({ title: 'Processando credenciais...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+            
+            if(this.isLoginMode) {
+                auth.signInWithEmailAndPassword(email, pass).then(() => Swal.close()).catch(() => Swal.fire('Erro', 'Usuário ou senha incorretos.', 'error'));
             } else {
-                document.getElementById('login-screen').classList.remove('hidden');
-                document.querySelectorAll('.hidden-app').forEach(el => el.classList.add('hidden-app'));
+                auth.createUserWithEmailAndPassword(email, pass).then(() => Swal.close()).catch((err) => Swal.fire('Erro de Registro', err.message, 'error'));
             }
         });
+
+        if(isFirebaseConfigured) {
+            auth.onAuthStateChanged((user) => {
+                if (user) {
+                    currentUserId = user.uid;
+                    document.getElementById('user-email-display').innerText = user.email;
+                    document.getElementById('login-screen').classList.add('hidden');
+                    document.querySelectorAll('.hidden-app').forEach(el => el.classList.remove('hidden-app'));
+                    AppState.listen(currentUserId);
+                    this.init();
+                } else {
+                    currentUserId = null;
+                    document.getElementById('login-screen').classList.remove('hidden');
+                    document.querySelectorAll('.hidden-app').forEach(el => el.classList.add('hidden-app'));
+                }
+            });
+        }
     },
 
-    async logout() { await signOut(auth); },
+    logout() {
+        if(!isFirebaseConfigured) { location.reload(); return; }
+        auth.signOut();
+    },
 
     renderAll() {
         this.renderHeader(); this.renderDashboard(); this.renderGuests();
@@ -125,6 +169,12 @@ const app = {
         const dataCasamento = new Date(appData.settings.dataCasamento); const hoje = new Date();
         const dias = Math.ceil((dataCasamento.getTime() - hoje.getTime()) / (1000 * 3600 * 24));
         document.getElementById('countdown').innerHTML = `<i class="fa-regular fa-clock"></i> Faltam ${dias > 0 ? dias : 0} dias`;
+        
+        // IA Assistant Premium Insights
+        const pendentes = appData.guests.filter(g => g.status === 'pending').length;
+        const sug = document.getElementById('ai-suggestion');
+        if(pendentes > 0) sug.innerHTML = `Identifiquei <b>${pendentes} confirmações pendentes</b>. Vá na aba "Avisos" para disparar a fila de cobrança ou use o RSVP Tinder!`;
+        else sug.innerHTML = `Tudo perfeito por aqui! Checklist e confirmações em dia.`;
     },
 
     renderDashboard() {
@@ -164,24 +214,20 @@ const app = {
         }
     },
 
+    // --- CONTACT PICKER API NATIVA (ANDROID/CHROME) ---
     async vincularContatoCelular(familyId) {
         if ('contacts' in navigator && 'ContactsManager' in window) {
             try {
-                const props = ['name', 'tel']; const opts = { multiple: false };
-                const contacts = await navigator.contacts.select(props, opts);
+                const contacts = await navigator.contacts.select(['name', 'tel'], { multiple: false });
                 if (contacts.length > 0 && contacts[0].tel.length > 0) {
-                    const phoneClean = contacts[0].tel[0].replace(/\D/g, ''); 
                     const fam = appData.families.find(f => f.id === familyId);
-                    if(fam) { fam.phone = phoneClean; AppState.save(); Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: `Contato vinculado!`, showConfirmButton: false, timer: 2000 }); }
-                } else { Swal.fire('Aviso', 'O contato selecionado não possui um número.', 'info'); }
-            } catch (ex) { console.log("Erro Contact Picker:", ex); }
+                    if(fam) { fam.phone = contacts[0].tel[0].replace(/\D/g, ''); AppState.save(); }
+                }
+            } catch (ex) { console.log(ex); }
         } else {
             const fam = appData.families.find(f => f.id === familyId);
-            const { value: manualPhone } = await Swal.fire({
-                title: 'Vincular Número', text: 'Seu navegador não suporta puxar a agenda. Digite o número com DDD:',
-                input: 'number', inputPlaceholder: 'Ex: 47999999999', inputValue: fam.phone || ''
-            });
-            if(manualPhone) { fam.phone = manualPhone.replace(/\D/g, ''); AppState.save(); Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Salvo com sucesso!', showConfirmButton: false, timer: 1500 }); }
+            const { value: manualPhone } = await Swal.fire({ title: 'Vincular WhatsApp', text: 'Insira o número com o DDD:', input: 'number', inputValue: fam.phone || '' });
+            if(manualPhone) { fam.phone = manualPhone.replace(/\D/g, ''); AppState.save(); }
         }
     },
 
@@ -207,16 +253,13 @@ const app = {
                     <div class="flex justify-between items-start mb-3">
                         <h3 class="font-bold text-dark text-lg">${f.name}</h3>
                         <div class="flex gap-2">
-                            <button onclick="app.vincularContatoCelular('${f.id}')" class="${hasPhone ? 'text-green-500 bg-green-50' : 'text-blue-500 bg-blue-50'} px-2 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1 hover:scale-105" title="Abrir agenda do celular">
-                                <i class="fa-solid ${hasPhone ? 'fa-address-book' : 'fa-mobile-screen'}"></i> ${hasPhone ? 'Atualizar' : 'Vincular'}
-                            </button>
+                            <button onclick="app.vincularContatoCelular('${f.id}')" class="${hasPhone ? 'text-green-500 bg-green-50' : 'text-blue-500 bg-blue-50'} px-2 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1" title="Vincular contato da agenda"><i class="fa-solid ${hasPhone ? 'fa-address-book' : 'fa-mobile-screen'}"></i> ${hasPhone ? 'Atualizar' : 'Vincular'}</button>
                             <button onclick="app.deleteFamily('${f.id}')" class="text-gray-400 hover:text-red-500 p-1.5 transition"><i class="fa-solid fa-trash text-sm"></i></button>
                         </div>
                     </div>
                     ${hasPhone ? `<div class="text-[10px] text-green-600 font-bold mb-2 break-all"><i class="fa-brands fa-whatsapp mr-1"></i> ${f.phone}</div>` : ''}
                     <div class="flex gap-2 mb-4 text-[10px] uppercase font-bold tracking-wider">
-                        <span class="bg-gray-100 px-2 py-1 rounded text-gray-600">Pessoas: ${totalPessoas}</span>
-                        ${statusCount.confirmed > 0 ? `<span class="bg-green-100 text-green-700 px-2 py-1 rounded">Conf: ${statusCount.confirmed}</span>` : ''}
+                        <span class="bg-gray-100 px-2 py-1 rounded text-gray-600">Total Integrantes: ${totalPessoas}</span>
                     </div>
                     <div class="space-y-2 min-h-[40px]" id="family-list-${f.id}">
                         ${fGuests.map(g => this.createGuestPill(g)).join('')}
@@ -249,133 +292,171 @@ const app = {
         if(guest) { guest.familyId = familyId; AppState.save(); }
     },
 
+    // --- MENSAGENS E AUTOMAÇÃO INTELEGENTE ---
     enhanceMessageAI() {
-        const draftInput = document.getElementById('msg-draft'); const draft = draftInput.value.trim();
-        if(!draft) return Swal.fire('Aviso', 'Escreva algo para a IA melhorar!', 'warning');
-        Swal.fire({ title: '✨ IA Analisando...', text: 'Melhorando tom e gramática...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+        const draftInput = document.getElementById('msg-draft');
+        const draft = draftInput.value.trim();
+        if(!draft) return Swal.fire('Aviso', 'Escreva algo para a IA lapidar!', 'warning');
+        Swal.fire({ title: '✨ Analisando Ortografia e Coerência...', text: 'Formatando mensagem premium...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
         setTimeout(() => {
             let improved = draft;
             if(!improved.includes('[Familia]')) improved = `Olá, família [Familia]! ✨\n\n` + improved;
             improved = improved.charAt(0).toUpperCase() + improved.slice(1);
-            if(!improved.toLowerCase().includes('com carinho') && !improved.toLowerCase().includes('abraços')) { improved += `\n\nCom carinho,\nEquipe de Cerimonial - ${appData.settings.noivos} 🥂`; }
+            if(!improved.toLowerCase().includes('com carinho') && !improved.toLowerCase().includes('abraços')) {
+                improved += `\n\nContamos com vocês! Com carinho,\nAssessoria de Cerimonial 🥂`;
+            }
             draftInput.value = ''; Swal.close();
             let i = 0;
             const typeWriter = setInterval(() => {
                 draftInput.value += improved.charAt(i); i++;
-                if (i >= improved.length) { clearInterval(typeWriter); confetti({ particleCount: 50, origin: { y: 0.8 }, colors: ['#D4AF37', '#FBBF24'] }); }
-            }, 10);
-        }, 1500);
+                if (i >= improved.length) { clearInterval(typeWriter); confetti({ particleCount: 40, origin: { y: 0.8 } }); }
+            }, 8);
+        }, 1200);
     },
 
     buildMessageQueue() {
         const draft = document.getElementById('msg-draft').value.trim();
-        if(!draft) return Swal.fire('Erro', 'A mensagem não pode estar vazia.', 'error');
-        const listContainer = document.getElementById('message-queue-list'); listContainer.innerHTML = '';
-        let familiasComCapitao = 0;
+        if(!draft) return Swal.fire('Erro', 'Escreva a mensagem base antes.', 'error');
+        const listContainer = document.getElementById('message-queue-list');
+        listContainer.innerHTML = '';
+        let count = 0;
 
         appData.families.forEach(f => {
             if(f.phone && f.phone.length >= 8) {
-                familiasComCapitao++;
+                count++;
                 const finalMsg = draft.replace(/\[Familia\]/g, f.name);
                 const wpLink = `https://wa.me/55${f.phone}?text=${encodeURIComponent(finalMsg)}`;
                 listContainer.innerHTML += `
                     <li class="p-4 border-b border-gray-50 flex items-center justify-between hover:bg-gray-50 transition">
                         <div><div class="font-bold text-dark text-sm">${f.name}</div><div class="text-[10px] text-gray-500"><i class="fa-brands fa-whatsapp text-green-500"></i> ${f.phone}</div></div>
-                        <a href="${wpLink}" target="_blank" onclick="app.markAsSent(this)" class="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-xl text-xs font-bold transition shadow-sm flex items-center gap-2">
-                            <i class="fa-brands fa-whatsapp text-lg"></i> Enviar
-                        </a>
-                    </li>
-                `;
+                        <a href="${wpLink}" target="_blank" onclick="app.markAsSent(this)" class="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2"><i class="fa-brands fa-whatsapp text-lg"></i> Disparar</a>
+                    </li>`;
             }
         });
-        if(familiasComCapitao === 0) listContainer.innerHTML = `<li class="p-4 text-center text-red-500 text-sm">Nenhuma família possui telefone vinculado.</li>`;
-        else Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Fila gerada!', showConfirmButton: false, timer: 3000 });
+        if(count === 0) listContainer.innerHTML = `<li class="p-4 text-center text-red-500 text-sm">Vincule números de celular às suas famílias para liberar os disparos.</li>`;
+    },
+    markAsSent(btn) { btn.className = "bg-gray-200 text-gray-500 px-4 py-2 rounded-xl text-xs font-bold"; btn.innerHTML = `<i class="fa-solid fa-check"></i> Aberto`; },
+
+    // --- SMART IMPORT COMPATÍVEL COM O FORMATO SaaS ---
+    importExcel(event) {
+        const file = event.target.files[0]; if (!file) return;
+        Swal.fire({ title: 'Escaneando Colunas...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            try {
+                const workbook = XLSX.read(new Uint8Array(e.target.result), {type: 'array'});
+                const jsonData = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], {header: 1}); 
+                let headRow = -1, colNome = -1, colFam = -1, colAcomp = -1, colStatus = -1;
+                
+                for(let i = 0; i < Math.min(10, jsonData.length); i++) {
+                    const row = jsonData[i] || [];
+                    for(let j = 0; j < row.length; j++) {
+                        const cell = String(row[j]).toLowerCase().trim();
+                        if(cell === 'nome' || cell === 'convidado') colNome = j;
+                        if(cell === 'família' || cell === 'familia') colFam = j;
+                        if(cell === 'acompanhantes' || cell === 'quantidade') colAcomp = j;
+                        if(cell === 'status' || cell === 'confirmação' || cell === 'confirmacao') colStatus = j;
+                    }
+                    if(colNome !== -1) { headRow = i; break; }
+                }
+                if(headRow === -1 || colNome === -1) return Swal.fire('Erro', 'Formato incompatível. Coluna "Nome" obrigatória.', 'error');
+                
+                let countG = 0;
+                for(let i = headRow + 1; i < jsonData.length; i++) {
+                    const r = jsonData[i]; if(!r || !r[colNome]) continue;
+                    const name = String(r[colNome]).trim();
+                    const famName = colFam !== -1 && r[colFam] ? String(r[colFam]).trim() : 'Avulso';
+                    const acomp = colAcomp !== -1 && r[colAcomp] ? parseInt(r[colAcomp]) || 0 : 0;
+                    let st = colStatus !== -1 && r[colStatus] ? String(r[colStatus]).toLowerCase().trim() : 'pending';
+                    if(['sim','confirmado','vai'].includes(st)) st = 'confirmed';
+                    if(['não','nao','recusado'].includes(st)) st = 'declined';
+
+                    let fam = appData.families.find(f => f.name.toLowerCase() === famName.toLowerCase());
+                    if (!fam && famName !== 'Avulso') { fam = { id: this.generateId(), name: famName, phone: '' }; appData.families.push(fam); }
+                    
+                    if(!appData.guests.find(g => g.name.toLowerCase() === name.toLowerCase())) {
+                        appData.guests.push({ id: this.generateId(), name: name, phone: '', companions: acomp, status: st, familyId: fam ? fam.id : null });
+                        countG++;
+                    }
+                }
+                AppState.save(); Swal.fire('Sucesso', `${countG} Convidados importados e agrupados com sucesso!`, 'success');
+            } catch (err) { Swal.fire('Erro', 'Falha ao processar planilha.', 'error'); }
+        };
+        reader.readAsArrayBuffer(file); event.target.value = '';
     },
 
-    markAsSent(btnElement) {
-        btnElement.classList.remove('bg-green-500', 'hover:bg-green-600'); btnElement.classList.add('bg-gray-200', 'text-gray-500');
-        btnElement.innerHTML = `<i class="fa-solid fa-check text-lg"></i> Enviado`;
+    importFinanceJSON(event) {
+        const file = event.target.files[0]; if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            try {
+                const arr = JSON.parse(e.target.result);
+                if(!Array.isArray(arr)) throw new Error("JSON deve ser uma lista de objetos.");
+                arr.forEach(i => appData.expenses.push({ id: this.generateId(), name: i.name || i.nome || 'Importado', category: i.category || 'Geral', amount: parseFloat(i.amount || i.valor || 0), paidAmount: parseFloat(i.paidAmount || i.pago || 0) }));
+                AppState.save(); Swal.fire('Sucesso', 'Finanças integradas.', 'success');
+            } catch(ex) { Swal.fire('Erro', ex.message, 'error'); }
+        }; reader.readAsText(file); event.target.value = '';
     },
 
+    // --- CRUD E MÓDULOS DE COMPLEMENTO ---
     generateId() { return Math.random().toString(36).substr(2, 9); },
     openFabMenu() {
         Swal.fire({
             title: 'Ação Rápida', showCancelButton: true, showDenyButton: true,
             confirmButtonText: '<i class="fa-solid fa-user-plus"></i> Convidado', denyButtonText: '<i class="fa-solid fa-wallet"></i> Gasto', cancelButtonText: '<i class="fa-solid fa-people-roof"></i> Família',
             customClass: { confirmButton: 'bg-gold text-white', denyButton: 'bg-dark text-white', cancelButton: 'bg-gray-200 text-dark' }
-        }).then((result) => {
-            if (result.isConfirmed) this.addGuestModal(); else if (result.isDenied) this.addExpenseModal(); else if (result.dismiss === Swal.DismissReason.cancel) this.addFamilyModal();
-        });
+        }).then((res) => { if (res.isConfirmed) this.addGuestModal(); else if (res.isDenied) this.addExpenseModal(); else if (res.dismiss === Swal.DismissReason.cancel) this.addFamilyModal(); });
     },
-    async addFamilyModal() { const { value: name } = await Swal.fire({ title: 'Nova Família', input: 'text', showCancelButton: true }); if (name) { appData.families.push({ id: this.generateId(), name: name, phone: '' }); AppState.save(); } },
-    deleteFamily(id) { Swal.fire({ title: 'Excluir família?', text: "Convidados ficarão avulsos.", icon: 'warning', showCancelButton: true }).then((r) => { if (r.isConfirmed) { appData.guests.filter(g => g.familyId === id).forEach(g => g.familyId = null); appData.families = appData.families.filter(f => f.id !== id); AppState.save(); } }); },
+    async addFamilyModal() { const { value: n } = await Swal.fire({ title: 'Nova Família', input: 'text', showCancelButton: true }); if (n) { appData.families.push({ id: this.generateId(), name: n, phone: '' }); AppState.save(); } },
+    deleteFamily(id) { appData.guests.filter(g => g.familyId === id).forEach(g => g.familyId = null); appData.families = appData.families.filter(f => f.id !== id); AppState.save(); },
     async addGuestModal() {
-        const { value: f } = await Swal.fire({
-            title: 'Novo Convidado', html: `<input id="swal-g-name" class="swal2-input" placeholder="Nome Completo"><input id="swal-g-acomp" type="number" class="swal2-input" placeholder="Qtd. Acompanhantes (Padrão: 0)">`,
-            focusConfirm: false, showCancelButton: true, preConfirm: () => [ document.getElementById('swal-g-name').value.replace(/\b\w/g, l => l.toUpperCase()), parseInt(document.getElementById('swal-g-acomp').value) || 0 ]
-        });
-        if (f && f[0]) { appData.guests.push({ id: this.generateId(), name: f[0], companions: f[1], status: 'pending', familyId: null }); AppState.save(); }
+        const { value: f } = await Swal.fire({ title: 'Adicionar Convidado', html: `<input id="swal-g-name" class="swal2-input" placeholder="Nome"><input id="swal-g-acomp" type="number" class="swal2-input" placeholder="Acompanhantes">`, showCancelButton: true, preConfirm: () => [document.getElementById('swal-g-name').value, parseInt(document.getElementById('swal-g-acomp').value)||0] });
+        if(f && f[0]) { appData.guests.push({ id: this.generateId(), name: f[0], companions: f[1], status: 'pending', familyId: null }); AppState.save(); }
     },
     async editGuestModal(id) {
         const g = appData.guests.find(x => x.id === id);
-        const { value: f } = await Swal.fire({
-            title: 'Editar Convidado', html: `<input id="swal-e-name" class="swal2-input" value="${g.name}"><input id="swal-e-acomp" type="number" class="swal2-input" placeholder="Acompanhantes" value="${g.companions || 0}"><select id="swal-e-status" class="swal2-select"><option value="pending" ${g.status==='pending'?'selected':''}>Pendente</option><option value="confirmed" ${g.status==='confirmed'?'selected':''}>Confirmado</option><option value="declined" ${g.status==='declined'?'selected':''}>Recusado</option></select>`,
-            focusConfirm: false, showCancelButton: true, preConfirm: () => [ document.getElementById('swal-e-name').value, document.getElementById('swal-e-acomp').value, document.getElementById('swal-e-status').value ]
-        });
-        if (f) { g.name = f[0]; g.companions = parseInt(f[1])||0; g.status = f[2]; AppState.save(); }
+        const { value: f } = await Swal.fire({ title: 'Editar', html: `<input id="swal-e-name" class="swal2-input" value="${g.name}"><input id="swal-e-acomp" type="number" class="swal2-input" value="${g.companions || 0}"><select id="swal-e-status" class="swal2-select"><option value="pending" ${g.status==='pending'?'selected':''}>Pendente</option><option value="confirmed" ${g.status==='confirmed'?'selected':''}>Confirmado</option><option value="declined" ${g.status==='declined'?'selected':''}>Recusado</option></select>`, showCancelButton: true, preConfirm: () => [document.getElementById('swal-e-name').value, parseInt(document.getElementById('swal-e-acomp').value)||0, document.getElementById('swal-e-status').value] });
+        if(f) { g.name = f[0]; g.companions = f[1]; g.status = f[2]; AppState.save(); }
     },
     deleteGuest(id) { appData.guests = appData.guests.filter(g => g.id !== id); AppState.save(); },
-
     async addExpenseModal() {
-        const { value: f } = await Swal.fire({ title: 'Novo Gasto', html: `<input id="swal-ex-name" class="swal2-input" placeholder="Descrição"><input id="swal-ex-cat" class="swal2-input" placeholder="Categoria"><input id="swal-ex-amount" type="number" class="swal2-input" placeholder="Valor Total">`, focusConfirm: false, showCancelButton: true, preConfirm: () => [ document.getElementById('swal-ex-name').value, document.getElementById('swal-ex-cat').value, document.getElementById('swal-ex-amount').value ] });
-        if (f && f[0] && f[2]) { appData.expenses.push({ id: this.generateId(), name: f[0], category: f[1] || 'Geral', amount: parseFloat(f[2]), paidAmount: 0 }); AppState.save(); }
+        const { value: f } = await Swal.fire({ title: 'Novo Gasto', html: `<input id="swal-ex-name" class="swal2-input" placeholder="Item"><input id="swal-ex-cat" class="swal2-input" placeholder="Categoria"><input id="swal-ex-amount" type="number" class="swal2-input" placeholder="Total R$">`, showCancelButton: true, preConfirm: () => [document.getElementById('swal-ex-name').value, document.getElementById('swal-ex-cat').value, parseFloat(document.getElementById('swal-ex-amount').value)||0] });
+        if(f && f[0]) { appData.expenses.push({ id: this.generateId(), name: f[0], category: f[1]||'Geral', amount: f[2], paidAmount: 0 }); AppState.save(); }
     },
-    async payExpenseModal(id) { const e = appData.expenses.find(x => x.id === id); const { value: val } = await Swal.fire({ title: 'Pagamento', input: 'number', inputLabel: `Restante: R$ ${(e.amount - e.paidAmount).toFixed(2)}`, showCancelButton: true }); if (val) { e.paidAmount += parseFloat(val); if(e.paidAmount > e.amount) e.paidAmount = e.amount; AppState.save(); confetti({ particleCount: 50, colors: ['#22c55e'] }); } },
+    async payExpenseModal(id) { const e = appData.expenses.find(x => x.id === id); const { value: v } = await Swal.fire({ title: 'Pagar', input: 'number', inputLabel: `Restante: R$ ${e.amount - e.paidAmount}`, showCancelButton: true }); if(v) { e.paidAmount += parseFloat(v); if(e.paidAmount > e.amount) e.paidAmount = e.amount; AppState.save(); } },
     deleteExpense(id) { appData.expenses = appData.expenses.filter(e => e.id !== id); AppState.save(); },
-    async addTaskModal() { const { value: t } = await Swal.fire({ title: 'Nova Tarefa', input: 'text', showCancelButton: true }); if (t) { appData.tasks.push({ id: this.generateId(), title: t, done: false }); AppState.save(); } },
-    toggleTask(id) { const t = appData.tasks.find(x => x.id === id); if(t) { t.done = !t.done; if(t.done) confetti(); AppState.save(); } },
+    async addTaskModal() { const { value: t } = await Swal.fire({ title: 'Nova Tarefa', input: 'text', showCancelButton: true }); if(t) { appData.tasks.push({ id: this.generateId(), title: t, done: false }); AppState.save(); } },
+    toggleTask(id) { const t = appData.tasks.find(x => x.id === id); if(t) { t.done = !t.done; AppState.save(); } },
     deleteTask(id) { appData.tasks = appData.tasks.filter(t => t.id !== id); AppState.save(); },
 
-    importExcel(event) {
-        const file = event.target.files[0]; if (!file) return;
-        Swal.fire({ title: 'Analisando Excel...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
-        const reader = new FileReader();
-        reader.onload = (e) => {
-            try {
-                const workbook = XLSX.read(new Uint8Array(e.target.result), {type: 'array'});
-                const jsonData = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], {header: 1}); 
-                let headRow = -1, colNome = -1, colFam = -1;
-                for(let i = 0; i < Math.min(10, jsonData.length); i++) {
-                    const row = jsonData[i] || [];
-                    for(let j = 0; j < row.length; j++) {
-                        const cell = String(row[j]).toLowerCase().trim();
-                        if(cell.includes('nome')) colNome = j;
-                        if(cell.includes('família') || cell.includes('familia')) colFam = j;
-                    }
-                    if(colNome !== -1) { headRow = i; break; }
-                }
-                if(headRow === -1 || colNome === -1) return Swal.fire('Erro', 'Coluna "Nome" não encontrada.', 'error');
-                for(let i = headRow + 1; i < jsonData.length; i++) {
-                    if(!jsonData[i] || !jsonData[i][colNome]) continue; 
-                    const gName = String(jsonData[i][colNome]).trim();
-                    const fName = colFam !== -1 && jsonData[i][colFam] ? String(jsonData[i][colFam]).trim() : null;
-                    let fId = null;
-                    if (fName) {
-                        let fam = appData.families.find(f => f.name.toLowerCase() === fName.toLowerCase());
-                        if (!fam) { fam = { id: this.generateId(), name: fName, phone: '' }; appData.families.push(fam); }
-                        fId = fam.id;
-                    }
-                    if (!appData.guests.find(g => g.name.toLowerCase() === gName.toLowerCase())) {
-                        appData.guests.push({ id: this.generateId(), name: gName, companions: 0, status: 'pending', familyId: fId });
-                    }
-                }
-                AppState.save(); Swal.fire('Sucesso', 'Excel importado e salvo na nuvem.', 'success');
-            } catch (error) { Swal.fire('Erro', error.message, 'error'); }
-        };
-        reader.readAsArrayBuffer(file); event.target.value = ''; 
-    },
-    saveConfig() { appData.settings.noivos = document.getElementById('cfg-names').value; appData.settings.dataCasamento = document.getElementById('cfg-date').value; AppState.save(); Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Salvo!', showConfirmButton: false, timer: 1500 }); },
+    renderExpenses() { document.getElementById('expenses-list').innerHTML = appData.expenses.map(e => `<tr class="hover:bg-gray-50"><td class="p-4 font-medium">${e.name}</td><td class="p-4 text-gray-500">${e.category}</td><td class="p-4 font-semibold">R$ ${e.amount}</td><td class="p-4">${((e.paidAmount/e.amount)*100 || 0).toFixed(0)}% Pago</td><td class="p-4 text-right"><button onclick="app.payExpenseModal('${e.id}')" class="text-green-600 p-2"><i class="fa-solid fa-money-bill-wave"></i></button><button onclick="app.deleteExpense('${e.id}')" class="text-red-400 p-2"><i class="fa-solid fa-trash"></i></button></td></tr>`).join(''); },
     
+    // --- RIFA ORGANIZADA POR FAMÍLIA ÚNICA ---
+    renderRifa() {
+        const total = appData.rifa.reduce((acc, curr) => acc + parseFloat(curr.amount), 0); const meta = appData.settings.metaRifa || 5000;
+        document.getElementById('rifa-current').innerText = `R$ ${total}`; document.getElementById('rifa-goal').innerText = `R$ ${meta}`; document.getElementById('rifa-progress').style.width = `${Math.min(100, (total/meta)*100)}%`;
+        document.getElementById('rifa-list').innerHTML = [...appData.rifa].reverse().map(r => {
+            const fName = appData.families.find(f => f.id === r.familyId)?.name || 'Avulso';
+            return `<li class="p-4 bg-white rounded-xl border flex justify-between items-center shadow-sm"><div><div class="font-bold text-sm"><i class="fa-solid fa-people-roof text-gold mr-1"></i> ${fName}</div><div class="mt-1">${r.numbers.map(n=>`<span class="raffle-ticket">Nº ${n}</span>`).join('')}</div></div><div class="font-bold text-green-600">R$ ${r.amount}</div></li>`;
+        }).join('');
+    },
+    async addRifaModal() {
+        const fams = appData.families.map(f => `<option value="${f.id}">${f.name}</option>`).join('');
+        const { value: f } = await Swal.fire({ title: 'Vender Rifa', html: `<select id="swal-r-fam" class="swal2-select w-full">${fams}</select><input id="swal-r-amt" type="number" class="swal2-input" placeholder="Valor total arrecadado"><input id="swal-r-qtd" type="number" class="swal2-input" placeholder="Quantidade de números">`, preConfirm: () => [document.getElementById('swal-r-fam').value, parseFloat(document.getElementById('swal-r-amt').value)||0, parseInt(document.getElementById('swal-r-qtd').value)||0] });
+        if(f && f[1] > 0) {
+            const nums = []; for(let i=0; i<f[2]; i++) nums.push(appData.settings.nextRaffleNumber++);
+            appData.rifa.push({ id: this.generateId(), familyId: f[0], amount: f[1], numbers: nums }); AppState.save(); confetti();
+        }
+    },
+    realizarSorteio() {
+        const todos = []; appData.rifa.forEach(r => r.numbers.forEach(n => todos.push({ num: n, fam: r.familyId })));
+        if(todos.length === 0) return Swal.fire('Aviso', 'Nenhum número vendido.', 'warning');
+        const v = todos[Math.floor(Math.random() * todos.length)];
+        Swal.fire({ title: 'Ganhador do Prêmio!', html: `<div class="text-5xl text-gold font-bold my-4">Nº ${v.num}</div><div class="text-xl font-semibold">Família: ${appData.families.find(f=>f.id===v.fam)?.name}</div>`, icon: 'success' });
+        confetti({ particleCount: 200, spread: 80 });
+    },
+
+    // --- RSVP TINDER ---
     updateTinderBadge() { const p = appData.guests.filter(g => g.status === 'pending').length; const b = document.getElementById('tinder-badge'); if(p > 0) { b.innerText = p; b.classList.remove('hidden'); } else { b.classList.add('hidden'); } },
     renderTinderDeck() {
         const deck = document.getElementById('tinder-deck'); deck.querySelectorAll('.tinder-card').forEach(c => c.remove());
@@ -383,41 +464,22 @@ const app = {
         if (pendentes.length === 0) { document.getElementById('tinder-empty').style.display = 'flex'; return; }
         document.getElementById('tinder-empty').style.display = 'none';
         [...pendentes].reverse().forEach((g, index) => {
-            const fName = g.familyId ? appData.families.find(f => f.id === g.familyId)?.name : 'Avulso';
             const card = document.createElement('div'); card.className = 'tinder-card'; card.dataset.id = g.id;
             card.style.transform = `translateY(-${(pendentes.length - 1 - index) * 5}px) scale(${1 - ((pendentes.length - 1 - index) * 0.02)})`; card.style.zIndex = index + 1;
-            card.innerHTML = `<div class="text-xs uppercase tracking-widest text-gold mb-2 font-bold">${fName}</div><h3 class="text-3xl font-serif font-bold text-dark mb-2 leading-tight">${g.name}</h3>`;
+            card.innerHTML = `<div class="text-xs uppercase tracking-widest text-gold mb-2 font-bold">${g.familyId ? appData.families.find(f => f.id === g.familyId)?.name : 'Avulso'}</div><h3 class="text-3xl font-serif font-bold text-dark mb-2">${g.name}</h3>`;
             deck.appendChild(card);
         });
     },
     tinderAction(action) {
         const cards = document.getElementById('tinder-deck').querySelectorAll('.tinder-card'); if (cards.length === 0) return;
-        const topCard = cards[cards.length - 1]; const guest = appData.guests.find(g => g.id === topCard.dataset.id);
-        if(action === 'confirm') { topCard.style.transform = 'translate(150%, -50px) rotate(30deg)'; guest.status = 'confirmed'; confetti({ origin: { y: 0.6 } }); } else { topCard.style.transform = 'translate(-150%, -50px) rotate(-30deg)'; guest.status = 'declined'; }
-        topCard.style.opacity = '0'; setTimeout(() => { AppState.save(); }, 300);
+        const top = cards[cards.length - 1]; const guest = appData.guests.find(g => g.id === top.dataset.id);
+        if(action === 'confirm') { top.style.transform = 'translate(150%, -50px) rotate(30deg)'; guest.status = 'confirmed'; confetti(); } 
+        else { top.style.transform = 'translate(-150%, -50px) rotate(-30deg)'; guest.status = 'declined'; }
+        top.style.opacity = '0'; setTimeout(() => AppState.save(), 250);
     },
 
-    renderExpenses() { document.getElementById('expenses-list').innerHTML = appData.expenses.map(e => `<tr class="hover:bg-gray-50"><td class="p-4 font-medium">${e.name}</td><td class="p-4 text-gray-500">${e.category}</td><td class="p-4 font-semibold">R$ ${e.amount}</td><td class="p-4">${e.paidAmount}</td><td class="p-4 text-right"><button onclick="app.payExpenseModal('${e.id}')" class="text-green-600 p-2"><i class="fa-solid fa-money-bill-wave"></i></button><button onclick="app.deleteExpense('${e.id}')" class="text-red-400 p-2"><i class="fa-solid fa-trash"></i></button></td></tr>`).join(''); },
-    renderRifa() {
-        const total = appData.rifa.reduce((acc, curr) => acc + parseFloat(curr.amount), 0); const meta = appData.settings.metaRifa || 5000; const perc = Math.min(100, (total / meta) * 100);
-        document.getElementById('rifa-current').innerText = `R$ ${total}`; document.getElementById('rifa-goal').innerText = `R$ ${meta}`; document.getElementById('rifa-progress').style.width = `${perc}%`;
-        document.getElementById('rifa-list').innerHTML = [...appData.rifa].reverse().map(r => `<li class="p-4 border rounded-xl shadow-sm"><div class="font-bold text-sm">${appData.families.find(f => f.id === r.familyId)?.name || 'Avulso'} comprou ${r.numbers.length} números.</div></li>`).join('');
-    },
-    async addRifaModal() {
-        const fams = appData.families.map(f => `<option value="${f.id}">${f.name}</option>`).join('');
-        const { value: f } = await Swal.fire({ title: 'Vender Rifa', html: `<select id="swal-r-fam" class="swal2-select">${fams}</select><input id="swal-r-amt" type="number" class="swal2-input" placeholder="Valor (R$)"><input id="swal-r-qtd" type="number" class="swal2-input" placeholder="Qtd">`, preConfirm: () => [document.getElementById('swal-r-fam').value, document.getElementById('swal-r-amt').value, document.getElementById('swal-r-qtd').value] });
-        if (f) { const nums = []; for(let i=0; i<f[2]; i++) nums.push(appData.settings.nextRaffleNumber++); appData.rifa.push({ id: this.generateId(), familyId: f[0], amount: f[1], numbers: nums }); AppState.save(); confetti(); }
-    },
-    realizarSorteio() {
-        const todos = []; appData.rifa.forEach(r => r.numbers.forEach(n => todos.push({ num: n, fam: r.familyId })));
-        if(todos.length === 0) return Swal.fire('Aviso', 'Nenhum número vendido.', 'warning');
-        const v = todos[Math.floor(Math.random() * todos.length)];
-        Swal.fire({ title: 'Ganhador!', html: `<div class="text-4xl text-gold font-bold my-4">Nº ${v.num}</div><div class="text-lg">Família: ${appData.families.find(f=>f.id===v.fam)?.name}</div>`, icon: 'success' });
-    }
+    saveConfig() { appData.settings.noivos = document.getElementById('cfg-names').value; appData.settings.dataCasamento = document.getElementById('cfg-date').value; AppState.save(); Swal.fire('Sucesso', 'Nuvem atualizada!', 'success'); }
 };
 
 window.app = app;
-
-document.addEventListener('DOMContentLoaded', () => {
-    app.setupAuth();
-});
+document.addEventListener('DOMContentLoaded', () => app.setupAuth());
