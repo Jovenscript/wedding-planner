@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Wedding Planner SaaS</title>
     
+    <!-- Bibliotecas Permitidas -->
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
@@ -12,6 +13,11 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <!-- Firebase SDKs (Versão Compat CDN para rodar direto via local ou servidor) -->
+    <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore-compat.js"></script>
 
     <script>
         tailwind.config = {
@@ -27,33 +33,40 @@
             }
         }
     </script>
-
     <link rel="stylesheet" href="style.css">
 </head>
 <body class="bg-offwhite text-dark font-sans antialiased overflow-x-hidden selection:bg-gold selection:text-white relative">
 
-    <div id="login-screen" class="fixed inset-0 z-[100] bg-offwhite flex items-center justify-center p-4">
+    <!-- TELA DE LOGIN / CADASTRO -->
+    <div id="login-screen" class="fixed inset-0 z-[100] bg-offwhite flex items-center justify-center p-4 transition-all duration-500">
         <div class="glass-card p-8 rounded-3xl max-w-sm w-full text-center shadow-2xl border-t-4 border-gold">
             <h1 class="text-3xl font-bold text-gold tracking-widest uppercase font-serif mb-1">Wedding</h1>
-            <p class="text-xs text-gray-500 tracking-widest mb-8">Planner Access</p>
+            <p class="text-xs text-gray-500 tracking-widest mb-8">Planner SaaS</p>
             
-            <form id="login-form" class="space-y-4">
+            <h2 id="auth-title" class="text-lg font-bold mb-4 text-dark">Acesse sua conta</h2>
+
+            <form id="auth-form" class="space-y-4">
                 <div class="relative">
                     <i class="fa-solid fa-envelope absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-400"></i>
-                    <input type="email" id="login-email" placeholder="E-mail de Acesso" class="w-full pl-12 pr-4 py-3 rounded-xl border border-gray-200 bg-white/80 focus:ring-2 focus:ring-gold outline-none transition text-sm" required>
+                    <input type="email" id="auth-email" placeholder="E-mail" class="w-full pl-12 pr-4 py-3 rounded-xl border border-gray-200 bg-white/80 focus:ring-2 focus:ring-gold outline-none transition text-sm" required>
                 </div>
                 <div class="relative">
                     <i class="fa-solid fa-lock absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-400"></i>
-                    <input type="password" id="login-password" placeholder="Senha" class="w-full pl-12 pr-4 py-3 rounded-xl border border-gray-200 bg-white/80 focus:ring-2 focus:ring-gold outline-none transition text-sm" required>
+                    <input type="password" id="auth-password" placeholder="Senha" class="w-full pl-12 pr-4 py-3 rounded-xl border border-gray-200 bg-white/80 focus:ring-2 focus:ring-gold outline-none transition text-sm" required minlength="6">
                 </div>
-                <button type="submit" class="w-full bg-dark text-white font-bold py-3 rounded-xl shadow-lg hover:bg-black transition mt-4 flex items-center justify-center gap-2">
+                <button type="submit" id="auth-btn" class="w-full bg-dark text-white font-bold py-3 rounded-xl shadow-lg hover:bg-black transition mt-4 flex items-center justify-center gap-2">
                     Entrar <i class="fa-solid fa-arrow-right"></i>
                 </button>
             </form>
-            <p class="text-[10px] text-gray-400 mt-6">Acesso restrito aos noivos e cerimonial.</p>
+            
+            <div class="mt-6 text-sm text-gray-500">
+                <span id="auth-toggle-text">Não tem uma conta?</span> 
+                <button onclick="app.toggleAuthMode()" id="auth-toggle-btn" class="text-gold font-bold hover:underline">Criar agora</button>
+            </div>
         </div>
     </div>
 
+    <!-- NAVEGAÇÃO -->
     <nav class="glass-nav fixed w-full sm:w-64 sm:h-screen bottom-0 sm:bottom-auto sm:left-0 z-50 flex sm:flex-col items-center sm:items-start justify-start overflow-x-auto sm:overflow-visible sm:p-6 shadow-[0_-4px_20px_rgba(0,0,0,0.05)] sm:shadow-[4px_0_20px_rgba(0,0,0,0.05)] transition-all gap-2 sm:gap-0 px-4 py-2 sm:py-0 hidden-app">
         <div class="hidden sm:block w-full mb-10 text-center relative">
             <button onclick="app.logout()" class="absolute -top-2 -right-2 text-gray-400 hover:text-red-500 transition" title="Sair"><i class="fa-solid fa-right-from-bracket"></i></button>
@@ -90,27 +103,28 @@
             <i class="fa-solid fa-gear sm:mr-4 text-lg sm:text-xl"></i>
             <span class="text-[10px] sm:text-sm font-semibold mt-1 sm:mt-0 uppercase tracking-wider">Ajustes</span>
         </button>
-        
         <button onclick="app.logout()" class="sm:hidden nav-btn flex-shrink-0 flex flex-col items-center p-2 rounded-xl text-gray-500 hover:text-red-500 mt-1">
             <i class="fa-solid fa-right-from-bracket text-lg"></i>
             <span class="text-[10px] font-semibold mt-1 uppercase">Sair</span>
         </button>
     </nav>
 
+    <!-- CONTEÚDO PRINCIPAL -->
     <main class="sm:ml-64 p-4 sm:p-10 pb-24 sm:pb-10 min-h-screen relative hidden-app" id="main-content">
-        
         <header class="flex justify-between items-center mb-8 glass-card p-6 rounded-2xl">
             <div>
                 <h2 id="couple-name" class="text-3xl font-bold text-dark font-serif">Carregando Nuvem...</h2>
                 <p id="countdown" class="text-gold font-semibold mt-1 flex items-center gap-2">
-                    <i class="fa-solid fa-cloud-arrow-down animate-pulse"></i> <span>Sincronizando com Firebase...</span>
+                    <i class="fa-solid fa-cloud-arrow-down animate-pulse"></i> <span>Sincronizando banco exclusivo...</span>
                 </p>
             </div>
             <div class="text-right hidden sm:block">
-                <div class="text-sm text-gray-500 uppercase tracking-widest"><i class="fa-solid fa-database text-gold mr-1"></i> Firebase Online</div>
+                <div class="text-sm text-gray-500 uppercase tracking-widest" id="cloud-status-text"><i class="fa-solid fa-database text-gold mr-1"></i> Banco Ativo</div>
+                <div class="text-xs text-green-500 mt-1" id="user-email-display"></div>
             </div>
         </header>
 
+        <!-- DASHBOARD -->
         <div id="view-dashboard" class="view-section active">
             <div class="glass-card bg-gradient-to-r from-blush to-white p-6 rounded-2xl mb-8 border-l-4 border-gold shadow-sm flex items-start gap-4">
                 <div class="bg-white p-3 rounded-full shadow-sm text-gold"><i class="fa-solid fa-wand-magic-sparkles text-xl"></i></div>
@@ -158,6 +172,7 @@
             </div>
         </div>
 
+        <!-- MENSAGENS -->
         <div id="view-mensagens" class="view-section hidden">
             <div class="flex justify-between items-center mb-6">
                 <div>
@@ -170,15 +185,15 @@
                 <div class="glass-card p-6 rounded-2xl flex flex-col h-full border border-gold/30 relative overflow-hidden">
                     <div class="absolute top-0 right-0 p-4 opacity-10"><i class="fa-solid fa-wand-magic-sparkles text-6xl text-gold"></i></div>
                     <h3 class="font-bold mb-2 text-dark relative z-10"><i class="fa-solid fa-pen-nib mr-2 text-gold"></i>Rascunho da Mensagem</h3>
-                    <p class="text-xs text-gray-500 mb-4 relative z-10">Dica UX: Escreva <code class="bg-gray-100 px-1 rounded text-pink-600 font-bold">[Familia]</code> onde quiser que o nome deles apareça.</p>
+                    <p class="text-xs text-gray-500 mb-4 relative z-10">Use a tag <code class="bg-gray-100 px-1 rounded text-pink-600 font-bold">[Familia]</code> para personalizar dinamicamente.</p>
                     
-                    <textarea id="msg-draft" class="w-full flex-grow min-h-[200px] p-4 rounded-xl border border-gray-200 bg-white/80 focus:ring-2 focus:ring-gold outline-none transition resize-none relative z-10 text-sm" placeholder="Ex: Oi [Familia], preciso que vocês me confirmem se vão no casamento! bjs"></textarea>
+                    <textarea id="msg-draft" class="w-full flex-grow min-h-[200px] p-4 rounded-xl border border-gray-200 bg-white/80 focus:ring-2 focus:ring-gold outline-none transition resize-none relative z-10 text-sm" placeholder="Ex: Oi [Familia], passando para lembrar de confirmar a presença no nosso grande dia!"></textarea>
                     
                     <div class="mt-4 flex gap-2 relative z-10">
                         <button onclick="app.enhanceMessageAI()" class="flex-1 bg-gradient-to-r from-yellow-400 to-gold text-white font-bold py-3 rounded-xl shadow-lg hover:scale-[1.02] transition-transform flex items-center justify-center gap-2">
-                            <i class="fa-solid fa-wand-magic-sparkles"></i> Melhorar com IA
+                            <i class="fa-solid fa-wand-magic-sparkles"></i> Corrigir e Melhorar com IA
                         </button>
-                        <button onclick="app.buildMessageQueue()" class="bg-dark text-white font-bold px-6 py-3 rounded-xl shadow-lg hover:bg-black transition-colors flex items-center justify-center gap-2" title="Preparar Disparo">
+                        <button onclick="app.buildMessageQueue()" class="bg-dark text-white font-bold px-6 py-3 rounded-xl shadow-lg hover:bg-black transition-colors flex items-center justify-center gap-2" title="Preparar Fila">
                             <i class="fa-solid fa-arrow-right"></i>
                         </button>
                     </div>
@@ -186,21 +201,22 @@
 
                 <div class="glass-card p-6 rounded-2xl border border-gray-100 flex flex-col">
                     <h3 class="font-bold mb-2 text-dark"><i class="fa-brands fa-whatsapp mr-2 text-green-500"></i>Fila de Disparo Assistido</h3>
-                    <p class="text-xs text-gray-500 mb-4">O envio usa o contato principal vinculado à família. Clique em enviar para abrir o WhatsApp.</p>
+                    <p class="text-xs text-gray-500 mb-4">Envie de forma segura um por um. O sistema usará o contato vinculado diretamente no card da Família.</p>
                     
                     <div class="bg-white rounded-xl border border-gray-200 flex-grow overflow-hidden flex flex-col">
                         <div class="bg-gray-50 px-4 py-2 border-b border-gray-200 flex justify-between text-xs font-bold text-gray-500 uppercase">
                             <span>Família / Contato</span>
-                            <span>Status</span>
+                            <span>Ação</span>
                         </div>
                         <ul id="message-queue-list" class="divide-y divide-gray-100 overflow-y-auto max-h-[300px] flex-grow">
-                            <li class="p-4 text-center text-gray-400 text-sm italic">Clique na seta ao lado para carregar a fila.</li>
+                            <li class="p-4 text-center text-gray-400 text-sm italic">Gere o rascunho ao lado para carregar a lista de contatos.</li>
                         </ul>
                     </div>
                 </div>
             </div>
         </div>
 
+        <!-- CONVIDADOS -->
         <div id="view-convidados" class="view-section hidden">
             <div class="flex flex-col sm:flex-row justify-between items-center mb-6 gap-4">
                 <div class="flex gap-2">
@@ -209,21 +225,23 @@
                 </div>
                 <div class="relative">
                     <input type="file" id="import-excel" accept=".xlsx, .xls, .csv" class="hidden" onchange="app.importExcel(event)">
-                    <button onclick="document.getElementById('import-excel').click()" class="text-green-600 font-semibold hover:underline bg-green-50 px-4 py-2 rounded-xl border border-green-200 shadow-sm transition"><i class="fa-solid fa-file-excel mr-2"></i>Importar Excel</button>
+                    <button onclick="document.getElementById('import-excel').click()" class="text-green-600 font-semibold hover:underline bg-green-50 px-4 py-2 rounded-xl border border-green-200 shadow-sm transition flex items-center gap-2"><i class="fa-solid fa-file-excel"></i> Smart Import Planilha</button>
                 </div>
             </div>
 
             <div class="glass-card p-5 rounded-2xl mb-8 border border-gray-100">
-                <h3 class="font-bold text-sm text-gray-500 uppercase tracking-widest mb-4"><i class="fa-solid fa-inbox mr-2"></i>Convidados Avulsos</h3>
+                <h3 class="font-bold text-sm text-gray-500 uppercase tracking-widest mb-4"><i class="fa-solid fa-inbox mr-2"></i>Convidados Avulsos (Arraste para organizar nos cards)</h3>
                 <div id="unassigned-guests" class="flex flex-wrap gap-2 min-h-[60px]" ondragover="app.allowDrop(event)" ondrop="app.drop(event, null)"></div>
             </div>
 
             <div id="families-grid" class="columns-1 md:columns-2 lg:columns-3 gap-6 space-y-6"></div>
         </div>
 
+        <!-- RSVP TINDER -->
         <div id="view-tinder" class="view-section hidden flex-col items-center justify-center min-h-[70vh]">
             <div class="text-center mb-8">
                 <h2 class="text-2xl font-bold font-serif mb-2 text-dark">RSVP Express</h2>
+                <p class="text-gray-500 text-sm max-w-md mx-auto">Deslize para a direita para confirmar ou para a esquerda para recusar.</p>
             </div>
             
             <div class="relative w-full max-w-sm h-[400px]" id="tinder-deck">
@@ -239,10 +257,15 @@
             </div>
         </div>
 
+        <!-- FINANCEIRO -->
         <div id="view-financeiro" class="view-section hidden">
             <div class="flex justify-between items-center mb-6">
                 <h2 class="text-2xl font-bold font-serif">Controle de Custos</h2>
-                <button onclick="app.addExpenseModal()" class="bg-dark text-white px-5 py-2 rounded-xl text-sm font-semibold shadow-lg hover:bg-black transition"><i class="fa-solid fa-plus mr-2"></i>Novo Gasto</button>
+                <div class="flex gap-2">
+                    <input type="file" id="import-finance-json" accept=".json" class="hidden" onchange="app.importFinanceJSON(event)">
+                    <button onclick="document.getElementById('import-finance-json').click()" class="bg-white border border-gray-200 text-gray-700 px-4 py-2 rounded-xl text-sm font-semibold shadow-sm hover:bg-gray-50 transition"><i class="fa-solid fa-file-code mr-2"></i>Importar JSON Finanças</button>
+                    <button onclick="app.addExpenseModal()" class="bg-dark text-white px-5 py-2 rounded-xl text-sm font-semibold shadow-lg hover:bg-black transition"><i class="fa-solid fa-plus mr-2"></i>Novo Gasto</button>
+                </div>
             </div>
             <div class="glass-card rounded-2xl overflow-hidden border border-gray-100">
                 <div class="overflow-x-auto">
@@ -262,10 +285,12 @@
             </div>
         </div>
 
+        <!-- RIFA / GRAVATA -->
         <div id="view-rifa" class="view-section hidden">
             <div class="glass-card p-8 rounded-3xl text-center max-w-2xl mx-auto mb-8 border border-gold/20 relative overflow-hidden">
                 <div class="absolute -top-10 -right-10 text-gold/10 text-[150px]"><i class="fa-solid fa-ticket"></i></div>
-                <h2 class="text-3xl font-bold font-serif mb-2 relative z-10">Sorteio da Gravata / Pix</h2>
+                <h2 class="text-3xl font-bold font-serif mb-2 relative z-10">Operação Rifa / Gravata</h2>
+                <p class="text-gray-500 text-sm max-w-md mx-auto">Arrecadação calculada por Família Única garantindo transparência e diversão.</p>
                 
                 <div class="mb-6 text-left relative z-10 mt-6">
                     <div class="flex justify-between text-sm font-semibold mb-2">
@@ -278,20 +303,20 @@
                 </div>
                 
                 <div class="flex justify-center gap-4 relative z-10 flex-wrap">
-                    <button onclick="app.addRifaModal()" class="bg-gold text-white px-8 py-3 rounded-full font-bold shadow-[0_10px_20px_rgba(212,175,55,0.3)] hover:scale-105 transition-transform"><i class="fa-solid fa-cart-plus mr-2"></i>Vender Números</button>
-                    <button onclick="app.realizarSorteio()" class="bg-dark text-white px-8 py-3 rounded-full font-bold shadow-[0_10px_20px_rgba(0,0,0,0.3)] hover:scale-105 transition-transform"><i class="fa-solid fa-trophy mr-2"></i>Sortear Ganhador!</button>
+                    <button onclick="app.addRifaModal()" class="bg-gold text-white px-8 py-3 rounded-full font-bold shadow-[0_10px_20px_rgba(212,175,55,0.3)] hover:scale-105 transition-transform"><i class="fa-solid fa-cart-plus mr-2"></i>Registrar Venda</button>
+                    <button onclick="app.realizarSorteio()" class="bg-dark text-white px-8 py-3 rounded-full font-bold shadow-[0_10px_20px_rgba(0,0,0,0.3)] hover:scale-105 transition-transform"><i class="fa-solid fa-trophy mr-2"></i>Rodar Sorteio Real!</button>
                 </div>
             </div>
 
             <div class="max-w-2xl mx-auto glass-card p-6 rounded-2xl">
-                <h3 class="font-bold mb-4 uppercase tracking-widest text-xs text-gray-400">Números Vendidos</h3>
+                <h3 class="font-bold mb-4 uppercase tracking-widest text-xs text-gray-400">Números Concedidos por Família</h3>
                 <ul id="rifa-list" class="space-y-3"></ul>
             </div>
         </div>
 
+        <!-- CONFIG -->
         <div id="view-config" class="view-section hidden max-w-3xl mx-auto">
             <h2 class="text-2xl font-bold font-serif mb-6">Configurações do Evento</h2>
-            
             <div class="glass-card p-6 rounded-2xl mb-6">
                 <h3 class="font-bold mb-4 border-b pb-2 text-gold">Informações Básicas</h3>
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -304,16 +329,16 @@
                         <input type="date" id="cfg-date" class="w-full p-3 rounded-xl border border-gray-200 bg-white focus:ring-2 focus:ring-gold outline-none transition">
                     </div>
                 </div>
-                <button onclick="app.saveConfig()" class="mt-4 bg-dark text-white px-6 py-2 rounded-xl text-sm font-semibold hover:bg-black transition">Salvar Dados na Nuvem</button>
+                <button onclick="app.saveConfig()" class="mt-4 bg-dark text-white px-6 py-2 rounded-xl text-sm font-semibold hover:bg-black transition">Salvar na Nuvem</button>
             </div>
         </div>
-
     </main>
 
+    <!-- Global FAB -->
     <button onclick="app.openFabMenu()" class="fixed bottom-24 sm:bottom-10 right-6 w-14 h-14 bg-gradient-to-tr from-gold to-yellow-400 rounded-full shadow-[0_10px_25px_rgba(212,175,55,0.5)] text-white text-2xl flex items-center justify-center hover:scale-110 active:scale-95 transition-all z-50 hidden-app">
         <i class="fa-solid fa-plus"></i>
     </button>
 
-    <script type="module" src="script.js"></script>
+    <script src="script.js"></script>
 </body>
 </html>
