@@ -1,0 +1,26 @@
+{
+  "name": "Wedding Planner SaaS",
+  "short_name": "WeddingPlanner",
+  "description": "Organize seu casamento do começo ao fim — convidados, finanças, fornecedores e mais.",
+  "start_url": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "theme_color": "#D4AF37",
+  "background_color": "#FAF9F6",
+  "lang": "pt-BR",
+  "scope": "./",
+  "icons": [
+    {
+      "src": "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'><rect width='192' height='192' rx='40' fill='%23FAF9F6'/><text x='96' y='130' font-family='Georgia' font-size='110' font-weight='bold' text-anchor='middle' fill='%23D4AF37'>W</text></svg>",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'><rect width='512' height='512' rx='100' fill='%23FAF9F6'/><text x='256' y='350' font-family='Georgia' font-size='300' font-weight='bold' text-anchor='middle' fill='%23D4AF37'>W</text></svg>",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
