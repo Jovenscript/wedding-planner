@@ -854,7 +854,12 @@ Modules.finances = {
           <h2 class="text-2xl font-bold font-serif">Controle de custos</h2>
           <p class="text-sm text-muted">Veja em tempo real quanto cada categoria está pesando.</p>
         </div>
-        ${canEdit ? `<button id="btn-add-fin" class="bg-dark text-white px-4 py-2 rounded-xl text-sm font-semibold"><i class="fa-solid fa-plus mr-2"></i>Novo gasto</button>` : ''}
+        <div class="flex gap-2">
+          ${canEdit ? `<button id="btn-import-fin" class="bg-green-50 border border-green-200 text-green-700 px-4 py-2 rounded-xl text-sm font-semibold"><i class="fa-solid fa-file-import mr-2"></i>Importar JSON</button>` : ''}
+          ${canEdit ? `<input type="file" id="import-fin-file" accept=".json" class="hidden">` : ''}
+          ${canEdit ? `<button id="btn-export-fin" class="bg-white border border-gray-200 px-4 py-2 rounded-xl text-sm font-semibold"><i class="fa-solid fa-download mr-2"></i>Exportar</button>` : ''}
+          ${canEdit ? `<button id="btn-add-fin" class="bg-dark text-white px-4 py-2 rounded-xl text-sm font-semibold"><i class="fa-solid fa-plus mr-2"></i>Novo gasto</button>` : ''}
+        </div>
       </div>
 
       <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-6">
@@ -878,7 +883,12 @@ Modules.finances = {
         </div>
       </div>
     `;
-    if (canEdit) document.getElementById('btn-add-fin').addEventListener('click', () => this.add());
+    if (canEdit) {
+      document.getElementById('btn-add-fin').addEventListener('click', () => this.add());
+      document.getElementById('btn-import-fin').addEventListener('click', () => document.getElementById('import-fin-file').click());
+      document.getElementById('import-fin-file').addEventListener('change', e => this.importJSON(e));
+      document.getElementById('btn-export-fin').addEventListener('click', () => this.exportJSON());
+    }
     this.refresh();
     this._unsubs.forEach(u => u());
     this._unsubs = [State.subscribe('finances', () => this.refresh())];
@@ -959,6 +969,178 @@ Modules.finances = {
   async del(id) {
     const ok = await UI.confirm('Excluir gasto?'); if (!ok) return;
     await DB.remove('finances', id);
+  },
+
+  // ----- IMPORTAÇÃO JSON -----
+  importJSON(event) {
+    const file = event.target.files[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async e => {
+      try {
+        const raw = JSON.parse(e.target.result);
+        const items = this._normalizeImport(raw);
+        if (items.length === 0) {
+          Swal.fire('Vazio', 'Não encontrei gastos no arquivo.', 'warning');
+          return;
+        }
+        await this._previewAndImport(items);
+      } catch (err) {
+        console.error(err);
+        Swal.fire('Erro', 'JSON inválido ou em formato não reconhecido.', 'error');
+      } finally {
+        event.target.value = '';
+      }
+    };
+    reader.readAsText(file);
+  },
+
+  /**
+   * Aceita múltiplos formatos de JSON:
+   *  - { items: [{ name, category, total, paid }] }      ← seu formato
+   *  - [{ name, category, amount, paidAmount }]           ← formato do app
+   *  - [{ nome, categoria, valor, pago }]                 ← português
+   */
+  _normalizeImport(raw) {
+    const arr = Array.isArray(raw) ? raw : (raw.items || raw.gastos || raw.expenses || []);
+    if (!Array.isArray(arr)) return [];
+
+    // Conjunto válido de categorias do app (case-insensitive)
+    const validCats = WP_CONFIG.EXPENSE_CATEGORIES;
+    const matchCat = (str) => {
+      if (!str) return 'Outros';
+      const s = String(str).toLowerCase().trim();
+      const exact = validCats.find(c => c.toLowerCase() === s);
+      if (exact) return exact;
+      // Mapeamento heurístico das categorias comuns
+      const map = {
+        'música': 'DJ/Som', 'musica': 'DJ/Som', 'dj': 'DJ/Som', 'som': 'DJ/Som',
+        'gastronomia': 'Buffet', 'comida': 'Buffet', 'alimentação': 'Buffet', 'alimentacao': 'Buffet',
+        'foto': 'Fotografia', 'fotos': 'Fotografia',
+        'filme': 'Filmagem', 'video': 'Filmagem',
+        'flor': 'Decoração', 'flores': 'Decoração', 'decoracao': 'Decoração',
+        'cerimonialista': 'Cerimônia', 'cerimonia': 'Cerimônia', 'igreja': 'Cerimônia',
+        'doce': 'Doces', 'bolo': 'Doces',
+        'bebida': 'Bebidas', 'agua': 'Bebidas', 'água': 'Bebidas', 'refrigerante': 'Bebidas', 'choop': 'Bebidas', 'chopp': 'Bebidas',
+        'roupa': 'Vestido', 'vestido': 'Vestido', 'terno': 'Terno'
+      };
+      for (const [k, v] of Object.entries(map)) if (s.includes(k)) return v;
+      return 'Outros';
+    };
+
+    return arr.map(it => ({
+      name: String(it.name || it.nome || it.item || '').trim(),
+      category: matchCat(it.category || it.categoria || it.cat),
+      amount: Number(it.amount || it.total || it.valor || it.value || 0),
+      paidAmount: Number(it.paidAmount || it.paid || it.pago || it.paid_amount || 0)
+    })).filter(x => x.name);
+  },
+
+  async _previewAndImport(items) {
+    const total = items.reduce((a, x) => a + x.amount, 0);
+    const paid = items.reduce((a, x) => a + x.paidAmount, 0);
+
+    const rows = items.map((it, idx) => `
+      <tr class="text-left text-sm">
+        <td class="p-1.5"><input type="checkbox" data-idx="${idx}" checked class="rounded"></td>
+        <td class="p-1.5"><input value="${UI.escape(it.name)}" data-edit="name" data-row="${idx}" class="w-full px-2 py-1 border border-gray-200 rounded text-xs"></td>
+        <td class="p-1.5">
+          <select data-edit="category" data-row="${idx}" class="w-full px-2 py-1 border border-gray-200 rounded text-xs">
+            ${WP_CONFIG.EXPENSE_CATEGORIES.map(c => `<option ${c===it.category?'selected':''}>${c}</option>`).join('')}
+          </select>
+        </td>
+        <td class="p-1.5"><input type="number" step="0.01" value="${it.amount}" data-edit="amount" data-row="${idx}" class="w-24 px-2 py-1 border border-gray-200 rounded text-xs text-right"></td>
+        <td class="p-1.5"><input type="number" step="0.01" value="${it.paidAmount}" data-edit="paidAmount" data-row="${idx}" class="w-24 px-2 py-1 border border-gray-200 rounded text-xs text-right"></td>
+      </tr>
+    `).join('');
+
+    const html = `
+      <div class="text-left mb-3 text-sm bg-blush/30 p-3 rounded-xl">
+        Encontrei <b>${items.length}</b> itens · Total <b>${UI.money(total)}</b> · Pago <b>${UI.money(paid)}</b>.
+        <p class="text-muted mt-1 text-xs">Revise as categorias (mapeei automaticamente quando deu) e desmarque o que não quiser importar.</p>
+      </div>
+      <div class="overflow-x-auto max-h-[50vh] overflow-y-auto border border-gray-200 rounded-xl">
+        <table class="w-full text-xs">
+          <thead class="bg-gray-50 sticky top-0">
+            <tr class="text-left text-muted uppercase text-[10px] tracking-wider">
+              <th class="p-2"><input type="checkbox" id="check-all" checked></th>
+              <th class="p-2">Item</th><th class="p-2">Categoria</th><th class="p-2 text-right">Valor</th><th class="p-2 text-right">Pago</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    `;
+
+    const res = await Swal.fire({
+      title: `Importar ${items.length} gastos?`,
+      html,
+      width: '52rem',
+      showCancelButton: true,
+      confirmButtonText: `Importar selecionados`,
+      cancelButtonText: 'Cancelar',
+      didOpen: () => {
+        // "marcar todos" toggle
+        document.getElementById('check-all').addEventListener('change', e => {
+          document.querySelectorAll('[data-idx]').forEach(cb => cb.checked = e.target.checked);
+        });
+      },
+      preConfirm: () => {
+        const final = [];
+        items.forEach((it, idx) => {
+          const cb = document.querySelector(`[data-idx="${idx}"]`);
+          if (!cb || !cb.checked) return;
+          final.push({
+            name: document.querySelector(`[data-edit="name"][data-row="${idx}"]`).value.trim(),
+            category: document.querySelector(`[data-edit="category"][data-row="${idx}"]`).value,
+            amount: parseFloat(document.querySelector(`[data-edit="amount"][data-row="${idx}"]`).value) || 0,
+            paidAmount: parseFloat(document.querySelector(`[data-edit="paidAmount"][data-row="${idx}"]`).value) || 0
+          });
+        });
+        return final;
+      }
+    });
+
+    if (!res.isConfirmed || !res.value || res.value.length === 0) return;
+
+    UI.loading(`Importando ${res.value.length} gastos…`);
+    try {
+      // Importa em batch (Firestore aceita até 500 ops por batch)
+      const batch = firebase.firestore().batch();
+      const ref = firebase.firestore().collection('weddings').doc(State.weddingId).collection('finances');
+      res.value.forEach(item => {
+        batch.set(ref.doc(), {
+          ...item,
+          createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+          createdBy: State.user.uid,
+          importedFrom: 'json'
+        });
+      });
+      await batch.commit();
+      Swal.close();
+      UI.toast(`${res.value.length} gastos importados! 🎉`);
+      confetti({ particleCount: 60, spread: 70 });
+    } catch (err) {
+      Swal.fire('Erro', err.message, 'error');
+    }
+  },
+
+  exportJSON() {
+    const data = {
+      items: State.finances.map(e => ({
+        name: e.name, category: e.category,
+        total: e.amount, paid: e.paidAmount || 0
+      })),
+      wedding: State.wedding?.names || '',
+      exportedAt: new Date().toISOString()
+    };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `gastos-${(State.wedding?.names||'casamento').replace(/\s+/g,'-')}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    UI.toast('Backup baixado');
   }
 };
 
@@ -1433,7 +1615,10 @@ Modules.settings = {
     `).join('');
     list.querySelectorAll('[data-rm]').forEach(b => b.addEventListener('click', async () => {
       const ok = await UI.confirm('Remover colaborador?');
-      if (ok) await DB.removeCollaborator(State.weddingId, b.dataset.rm);
+      if (ok) {
+        await DB.removeCollaborator(State.weddingId, b.dataset.rm);
+        UI.toast('Colaborador removido');
+      }
     }));
   },
 
